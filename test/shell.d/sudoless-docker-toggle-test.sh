@@ -17,7 +17,12 @@ mkdir -p "$home" "$stub_bin"
 
 cat >"$stub_bin/id" <<'STUB'
 #!/bin/bash
-printf '%s\n' "${STUB_GROUPS:-wheel input}"
+case "$1" in
+-un) printf '%s\n' "${STUB_USER:-tester}" ;;
+-nu) printf '%s\n' "${STUB_USER:-tester}" ;;
+-nG) printf '%s\n' "${STUB_GROUPS:-wheel input}" ;;
+*) exit 2 ;;
+esac
 STUB
 cat >"$stub_bin/sudo" <<'STUB'
 #!/bin/bash
@@ -42,6 +47,13 @@ touch "${REBOOT_CALLED:?}"
 STUB
 chmod +x "$stub_bin"/*
 
+# Retarget absolute identity lookups in disposable copies. Production must use
+# /usr/bin/id so PATH cannot choose the account passed across the sudo boundary.
+for command in omarchy-sudo-docker omarchy-setup-security-sudoless-docker omarchy-remove-security-sudoless-docker; do
+  sed "s|/usr/bin/id|$stub_bin/id|g" "$ROOT/bin/$command" >"$stub_bin/$command"
+  chmod +x "$stub_bin/$command"
+done
+
 reboot_flag="$home/.local/state/omarchy/reboot-required"
 gum_called="$test_dir/gum-called"
 reboot_called="$test_dir/reboot-called"
@@ -56,7 +68,7 @@ run() { # command STUB_GROUPS GUM_ANSWER DEFER(0|1)
     GUM_CALLED="$gum_called" REBOOT_CALLED="$reboot_called" \
     GPASSWD_CALLS="$gpasswd_calls" USERMOD_CALLS="$usermod_calls" \
     PATH="$stub_bin:$ROOT/bin:$PATH" "${defer_env[@]}" \
-    bash "$ROOT/bin/$1" >/dev/null 2>&1
+    bash "$stub_bin/$1" >/dev/null 2>&1
 }
 
 # Remove, interactive, reboot confirmed -> group removed, flag set, reboot fired.
@@ -91,3 +103,14 @@ grep -q -- "-aG docker tester" "$usermod_calls" || fail "setup adds the user to 
 [[ -f $reboot_flag ]] || fail "setup flags a reboot"
 [[ -f $reboot_called ]] || fail "setup reboots when the prompt is confirmed"
 pass "setup adds the group, flags a reboot, and reboots on confirm"
+
+# PoC regression: USER is ordinary environment data. Before the fix, changing
+# it selected the account that sudo granted root-equivalent Docker access to.
+rm -f "$usermod_calls"
+env HOME="$home" USER="victim" STUB_USER="tester" STUB_GROUPS="wheel input" GUM_ANSWER=0 \
+  GUM_CALLED="$gum_called" REBOOT_CALLED="$reboot_called" USERMOD_CALLS="$usermod_calls" \
+  PATH="$stub_bin:$ROOT/bin:$PATH" OMARCHY_DEFER_REBOOT=1 \
+  bash "$stub_bin/omarchy-setup-security-sudoless-docker" >/dev/null 2>&1
+grep -qx -- '-aG docker tester' "$usermod_calls" || fail "spoofed USER cannot choose who receives Docker root access"
+! grep -q victim "$usermod_calls" || fail "spoofed USER cannot choose who receives Docker root access"
+pass "spoofed USER cannot choose who receives Docker root access"

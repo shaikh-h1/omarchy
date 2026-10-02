@@ -122,11 +122,32 @@ record=$(collect)
   fail "Grok's tokens by model keep cached input apart" "$record"
 pass "Grok counts sessions, prompts, and tokens from its session files"
 
+# A partially written or newer-format session must not take the whole usage
+# record down. Ignore its unusable fields and retain every valid session.
+mkdir -p "$sessions/malformed"
+jq -n --arg at "$now" '{last_active_at: $at, num_messages: "unknown"}' >"$sessions/malformed/summary.json"
+jq -n --arg at "$now" '{turns: [
+  {endedAt: $at, modelUsage: []},
+  {endedAt: $at, modelUsage: {"grok-broken": {inputTokens: "many", cachedReadTokens: null, outputTokens: -9, cacheCreationTokens: {}}}}
+]}' >"$sessions/malformed/usage.json"
+record=$(collect)
+[[ $(jq -c '{totalSessions, totalPrompts, todayPrompts, broken: .todayTokensByModel["grok-broken"]}' <<<"$record") == '{"totalSessions":4,"totalPrompts":10,"todayPrompts":4,"broken":0}' ]] ||
+  fail "malformed Grok session fields do not hide otherwise valid usage" "$record"
+pass "malformed Grok session fields do not hide otherwise valid usage"
+
+# Treat a structurally incomplete cache as a miss. Before this guard a valid
+# JSON cache missing `stats` raised KeyError and made every limits-only refresh
+# fail until someone removed the cache by hand.
+jq --arg home "$HOME/.grok" --arg day "$(date +%F)" '{home: $home, day: $day, at: now}' >"$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json"
+record=$(COLLECT_ARGS="--limits-only" collect)
+[[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "an incomplete Grok stats cache is rebuilt" "$record"
+pass "an incomplete Grok stats cache is rebuilt"
+
 # A limits-only refresh reuses the last scan rather than reading every summary.
 mkdir -p "$sessions/later"
 jq -n --arg at "$now" '{last_active_at: $at, num_messages: 1}' >"$sessions/later/summary.json"
 record=$(COLLECT_ARGS="--limits-only" collect)
-[[ $(jq -r '.totalSessions' <<<"$record") == 3 ]] || fail "a limits-only refresh reuses the session scan" "$record"
+[[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "a limits-only refresh reuses the session scan" "$record"
 pass "a limits-only refresh reuses the session scan"
 
 # A scan from another day is never reused, so yesterday's sessions don't
@@ -134,5 +155,5 @@ pass "a limits-only refresh reuses the session scan"
 jq '.day = "2000-01-01"' "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json" >"$test_tmp/stats.json"
 mv "$test_tmp/stats.json" "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json"
 record=$(COLLECT_ARGS="--limits-only" collect)
-[[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "a scan from another day is made again" "$record"
+[[ $(jq -r '.totalSessions' <<<"$record") == 5 ]] || fail "a scan from another day is made again" "$record"
 pass "a scan from another day is made again"

@@ -3,6 +3,13 @@
 # omarchy:summary=Install the NordVPN service with optional GUI.
 # omarchy:requires-sudo=true
 
+if ((EUID == 0)) && [[ -v SUDO_UID ]]; then
+  [[ $SUDO_UID =~ ^[0-9]+$ ]] || { echo "Cannot identify the invoking user" >&2; exit 1; }
+  account_user=$(/usr/bin/id -nu "+$SUDO_UID") || exit 1
+else
+  account_user=$(/usr/bin/id -un) || exit 1
+fi
+
 echo "Installing NordVPN..."
 omarchy-pkg-add nordvpn-bin
 
@@ -10,7 +17,7 @@ echo "Enabling NordVPN daemon..."
 sudo systemctl enable --now nordvpnd
 
 echo "Adding user to nordvpn group..."
-sudo usermod -aG nordvpn "$USER"
+sudo usermod -aG nordvpn "$account_user"
 
 echo -e "\nNordVPN installed! After reboot, run 'nordvpn login' to authenticate."
 

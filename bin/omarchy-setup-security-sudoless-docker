@@ -5,10 +5,19 @@
 
 set -e
 
+# USER is caller-controlled. Resolve the authenticated process owner before
+# handing an account name to privileged group-management commands.
+if ((EUID == 0)) && [[ -v SUDO_UID ]]; then
+  [[ $SUDO_UID =~ ^[0-9]+$ ]] || { echo "Cannot identify the invoking user" >&2; exit 1; }
+  account_user=$(/usr/bin/id -nu "+$SUDO_UID") || exit 1
+else
+  account_user=$(/usr/bin/id -un) || exit 1
+fi
+
 # Ask about the configured groups, not this session's: once enabled it stays
 # enabled for the account even before the reboot that lets this session use it.
 if ! omarchy-sudo-docker --configured; then
-  echo "Sudoless Docker is already enabled: $USER is in the docker group."
+  echo "Sudoless Docker is already enabled: $account_user is in the docker group."
   echo "To disable it again, run: omarchy-remove-security-sudoless-docker"
   exit 0
 fi
@@ -29,7 +38,7 @@ echo "Docker access goes through a polkit/sudo prompt."
 echo ""
 
 if gum confirm "Enable sudoless Docker? This gives anything running as you passwordless root."; then
-  sudo usermod -aG docker "$USER"
+  sudo usermod -aG docker "$account_user"
   # A new docker group membership is only picked up by a fresh session, and in
   # practice logging out or newgrp isn't enough — only a reboot reliably applies
   # it. Record it so a later `omarchy update` still prompts

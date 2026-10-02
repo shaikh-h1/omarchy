@@ -68,6 +68,14 @@ def parse_time(value):
   return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def nonnegative_int(value):
+  """Turn an untrusted numeric field into a non-negative count."""
+  try:
+    return max(0, int(value or 0))
+  except (TypeError, ValueError, OverflowError):
+    return 0
+
+
 # The home Grok uses when nothing selects an account: GROK_HOME when set,
 # as the CLI itself reads it, else ~/.grok.
 def default_home():
@@ -96,7 +104,7 @@ def local_stats(home):
       if active:
         day = active.astimezone().date().isoformat()
         sessions += 1
-        prompts += int(summary.get("num_messages") or 0)
+        prompts += nonnegative_int(summary.get("num_messages"))
         days.add(day)
         if day == today:
           today_sessions += 1
@@ -111,15 +119,18 @@ def local_stats(home):
       days.add(day)
       if day == today:
         today_prompts += 1
-      for model, bucket in (turn.get("modelUsage") or {}).items():
+      model_usage = turn.get("modelUsage")
+      if not isinstance(model_usage, dict):
+        continue
+      for model, bucket in model_usage.items():
         if not isinstance(bucket, dict):
           continue
         # Grok's totalTokens leaves cache writes out; counting them here keeps
         # the day's total equal to the sum of its model's buckets.
-        cached = int(bucket.get("cachedReadTokens") or 0)
-        uncached = max(0, int(bucket.get("inputTokens") or 0) - cached)
-        output = int(bucket.get("outputTokens") or 0)
-        created = int(bucket.get("cacheCreationTokens") or 0)
+        cached = nonnegative_int(bucket.get("cachedReadTokens"))
+        uncached = max(0, nonnegative_int(bucket.get("inputTokens")) - cached)
+        output = nonnegative_int(bucket.get("outputTokens"))
+        created = nonnegative_int(bucket.get("cacheCreationTokens"))
         tokens = uncached + cached + output + created
         totals = models.setdefault(model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0})
         totals["inputTokens"] += uncached
@@ -152,7 +163,11 @@ def cached_local_stats(home, max_age):
   cache = cache_root() / "grok-stats.json"
   cached = read_json(cache) or {}
   today = datetime.now().astimezone().date().isoformat()
-  if cached.get("home") == str(home) and cached.get("day") == today and time.time() - float(cached.get("at") or 0) < max_age:
+  try:
+    age = time.time() - float(cached.get("at") or 0)
+  except (TypeError, ValueError, OverflowError):
+    age = max_age
+  if cached.get("home") == str(home) and cached.get("day") == today and isinstance(cached.get("stats"), dict) and age < max_age:
     return cached["stats"]
   stats = local_stats(home)
   write_json(cache, {"home": str(home), "day": today, "at": time.time(), "stats": stats})

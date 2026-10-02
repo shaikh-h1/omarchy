@@ -3,6 +3,13 @@
 # omarchy:summary=Install the Tailscale mesh VPN service and a web app for the Tailscale Admin Console.
 # omarchy:requires-sudo=true
 
+if ((EUID == 0)) && [[ -v SUDO_UID ]]; then
+  [[ $SUDO_UID =~ ^[0-9]+$ ]] || { echo "Cannot identify the invoking user" >&2; exit 1; }
+  account_user=$(/usr/bin/id -nu "+$SUDO_UID") || exit 1
+else
+  account_user=$(/usr/bin/id -un) || exit 1
+fi
+
 echo -e "\nInstalling Tailscale..."
 omarchy-pkg-add tailscale
 
@@ -10,8 +17,8 @@ echo -e "\nStarting Tailscale..."
 sudo systemctl enable --now tailscaled.service
 sudo tailscale up --accept-routes
 
-echo -e "\nAllowing $USER to manage Tailscale..."
-sudo tailscale set --operator="$USER"
+echo -e "\nAllowing $account_user to manage Tailscale..."
+sudo tailscale set --operator="$account_user"
 
 echo -e "\nReceiving Taildrop files in $HOME/Downloads..."
 systemctl --user enable --now omarchy-tailscale-receive.service

@@ -48,7 +48,7 @@ STUB
 cat > "$scratch/bin/fprintd-enroll" <<'STUB'
 #!/bin/bash
 # Stop before verification/PAM; no host authentication files may be changed.
-echo enroll >> "$CALL_LOG"
+echo "enroll $*" >> "$CALL_LOG"
 exit 1
 STUB
 cat > "$scratch/bin/fprintd-verify" <<'STUB'
@@ -75,7 +75,7 @@ assert_installs() {
 
 run_setup
 assert_installs "a fresh machine installs libfprint-git, fprintd and usbutils"
-grep -qx enroll "$CALL_LOG" || fail "installation is followed by enrollment"
+grep -qx "enroll $(/usr/bin/id -un)" "$CALL_LOG" || fail "installation is followed by enrollment for the process owner"
 pass "a fresh machine installs libfprint-git and reaches enrollment"
 
 INSTALLED=$'libfprint\nfprintd\nusbutils' run_setup
@@ -86,11 +86,11 @@ INSTALLED=$'libfprint-git\nfprintd\nusbutils' run_setup
 if grep -q '^pacman' "$CALL_LOG"; then
   fail "a rerun with everything installed does not touch pacman"
 fi
-grep -qx enroll "$CALL_LOG" || fail "a rerun with everything installed reaches enrollment"
+grep -qx "enroll $(/usr/bin/id -un)" "$CALL_LOG" || fail "a rerun with everything installed reaches enrollment"
 pass "a rerun with everything installed goes straight to enrollment"
 
 INSTALL_STATUS=1 run_setup
-if grep -qx enroll "$CALL_LOG"; then
+if grep -q '^enroll ' "$CALL_LOG"; then
   fail "a failed package transaction prevents enrollment"
 fi
 pass "a failed installation stops before enrollment"
@@ -98,3 +98,11 @@ pass "a failed installation stops before enrollment"
 HARDWARE_STATUS=1 run_setup
 [[ ! -s $CALL_LOG ]] || fail "missing hardware stops before package operations"
 pass "missing hardware performs no package operations"
+
+# PoC regression: the old command trusted USER, so `USER=victim` enrolled the
+# caller's fingerprint as victim through sudo. The privileged target must be
+# derived from the real process identity instead.
+USER=victim INSTALLED=$'libfprint-git\nfprintd\nusbutils' run_setup
+grep -qx "enroll $(/usr/bin/id -un)" "$CALL_LOG" || fail "spoofed USER cannot select the fingerprint enrollment account"
+! grep -q 'enroll victim' "$CALL_LOG" || fail "spoofed USER cannot select the fingerprint enrollment account"
+pass "spoofed USER cannot select the fingerprint enrollment account"
