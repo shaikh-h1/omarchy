@@ -5,6 +5,13 @@
 
 set -euo pipefail
 
+if ((EUID == 0)) && [[ -v SUDO_UID ]]; then
+  [[ $SUDO_UID =~ ^[0-9]+$ ]] || { echo "Cannot identify the invoking user" >&2; exit 1; }
+  account_user=$(/usr/bin/id -nu "+$SUDO_UID") || exit 1
+else
+  account_user=$(/usr/bin/id -un) || exit 1
+fi
+
 RULE_FILE="/etc/udev/rules.d/80-uinput.rules"
 
 if ! getent group input >/dev/null; then
@@ -12,9 +19,9 @@ if ! getent group input >/dev/null; then
   exit 1
 fi
 
-if ! id -nG "$USER" | tr ' ' '\n' | grep -x input >/dev/null; then
-  echo "Adding $USER to the input group. You may need to log out and back in before this applies."
-  pkexec usermod -aG input "$USER"
+if ! /usr/bin/id -nG "$account_user" | tr ' ' '\n' | grep -x input >/dev/null; then
+  echo "Adding $account_user to the input group. You may need to log out and back in before this applies."
+  pkexec usermod -aG input "$account_user"
 fi
 
 if omarchy-cmd-missing ydotool || omarchy-pkg-missing ydotool; then

@@ -5,6 +5,13 @@
 
 set -e
 
+if ((EUID == 0)) && [[ -v SUDO_UID ]]; then
+  [[ $SUDO_UID =~ ^[0-9]+$ ]] || { echo "Cannot identify the invoking fingerprint user" >&2; exit 1; }
+  fingerprint_user=$(/usr/bin/id -nu "+$SUDO_UID") || exit 1
+else
+  fingerprint_user=$(/usr/bin/id -un) || exit 1
+fi
+
 
 setup_pam_config() {
   # A clamshell gate runs before pam_fprintd in every stack: when the lid is
@@ -87,7 +94,7 @@ fi
 echo -e "\e[32m\nLet's setup your right index finger as the first fingerprint.\e[0m"
 echo -e "Keep moving the finger around on sensor until the process completes.\n"
 
-if sudo fprintd-enroll "$USER"; then
+if sudo fprintd-enroll "$fingerprint_user"; then
   echo -e "\e[32m\nFingerprint enrolled successfully!\e[0m"
 
   # Verify
